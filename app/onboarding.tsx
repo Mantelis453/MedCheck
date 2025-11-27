@@ -1603,8 +1603,10 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.card,
     borderRadius: BorderRadius.md,
     padding: Spacing.md,
+    paddingVertical: Spacing.base,
     borderWidth: 1,
     borderColor: Colors.border,
+    minHeight: 64,
     ...Shadows.sm,
   },
   dateInputFilled: {
@@ -1616,13 +1618,15 @@ const styles = StyleSheet.create({
     marginRight: Spacing.sm,
   },
   dateInputText: {
-    ...Typography.body,
+    ...Typography.bodyLarge,
     color: Colors.text.primary,
+    fontWeight: '600',
     marginBottom: Spacing.xs / 2,
   },
   dateInputAge: {
-    ...Typography.bodySmall,
+    ...Typography.body,
     color: Colors.text.secondary,
+    fontWeight: '500',
   },
   placeholder: {
     color: Colors.text.secondary,
