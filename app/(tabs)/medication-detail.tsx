@@ -735,40 +735,80 @@ export default function MedicationDetail() {
                   style={styles.timeSelector}
                   onPress={() => setShowTimePicker(true)}>
                   <Clock size={20} color={Colors.primary} />
-                  <Text style={styles.timeText}>
-                    {reminderTime
-                      ? reminderTime.toLocaleTimeString('en-US', {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })
-                      : 'Select time'}
-                  </Text>
+                  <Text style={styles.timeText}>Select time</Text>
                 </TouchableOpacity>
-
-                {reminderTime && (
-                  <TouchableOpacity
-                    style={styles.addTimeButton}
-                    onPress={addReminderTime}>
-                    <Plus size={20} color={Colors.textOnDark} />
-                    <Text style={styles.addTimeButtonText}>Add</Text>
-                  </TouchableOpacity>
-                )}
               </View>
 
-              {showTimePicker && (
-                <DateTimePicker
-                  value={reminderTime || new Date()}
-                  mode="time"
-                  is24Hour={false}
-                  display="default"
-                  onChange={(event, selectedDate) => {
-                    setShowTimePicker(Platform.OS === 'ios');
-                    if (selectedDate) {
-                      setReminderTime(selectedDate);
-                    }
-                  }}
-                />
-              )}
+              {/* Time Picker Modal Dropdown */}
+              <Modal
+                visible={showTimePicker}
+                transparent={true}
+                animationType="fade"
+                onRequestClose={() => setShowTimePicker(false)}>
+                <TouchableOpacity
+                  style={styles.timePickerModalOverlay}
+                  activeOpacity={1}
+                  onPress={() => setShowTimePicker(false)}>
+                  <View style={styles.timePickerModalContent}>
+                    <View style={styles.timePickerHeader}>
+                      <Text style={styles.timePickerTitle}>Select Time</Text>
+                      <TouchableOpacity
+                        onPress={() => setShowTimePicker(false)}
+                        style={styles.timePickerCloseButton}>
+                        <X size={20} color={Colors.textPrimary} />
+                      </TouchableOpacity>
+                    </View>
+                    <DateTimePicker
+                      value={reminderTime || new Date()}
+                      mode="time"
+                      is24Hour={false}
+                      display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                      onChange={(event, selectedDate) => {
+                        if (selectedDate) {
+                          if (Platform.OS === 'android') {
+                            // On Android, automatically add the selected time immediately
+                            const timeString = selectedDate.toTimeString().slice(0, 5);
+                            if (!reminderTimes.includes(timeString)) {
+                              setReminderTimes([...reminderTimes, timeString].sort());
+                            }
+                            setShowTimePicker(false);
+                          } else {
+                            // On iOS, just update the preview time as user scrolls
+                            setReminderTime(selectedDate);
+                          }
+                        }
+                      }}
+                    />
+                    {Platform.OS === 'ios' && (
+                      <View style={styles.timePickerActions}>
+                        <TouchableOpacity
+                          style={styles.timePickerCancelButton}
+                          onPress={() => {
+                            setShowTimePicker(false);
+                            setReminderTime(null);
+                          }}>
+                          <Text style={styles.timePickerCancelText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.timePickerConfirmButton}
+                          onPress={() => {
+                            // Add the time when Done is pressed on iOS
+                            if (reminderTime) {
+                              const timeString = reminderTime.toTimeString().slice(0, 5);
+                              if (!reminderTimes.includes(timeString)) {
+                                setReminderTimes([...reminderTimes, timeString].sort());
+                              }
+                              setReminderTime(null);
+                            }
+                            setShowTimePicker(false);
+                          }}>
+                          <Text style={styles.timePickerConfirmText}>Done</Text>
+                        </TouchableOpacity>
+                      </View>
+                    )}
+                  </View>
+                </TouchableOpacity>
+              </Modal>
 
               {reminderTimes.length > 0 && (
                 <ReminderFrequencyPicker
@@ -781,10 +821,11 @@ export default function MedicationDetail() {
             </View>
 
             <View style={styles.modalActions}>
-              {reminderTime && (
+              {reminderTimes.length > 0 && (
                 <TouchableOpacity
                   style={styles.removeButton}
                   onPress={() => {
+                    setReminderTimes([]);
                     setReminderTime(null);
                     setReminderDays([]);
                   }}>
@@ -794,12 +835,12 @@ export default function MedicationDetail() {
               <TouchableOpacity
                 style={[
                   styles.saveButton,
-                  (!reminderTime || (reminderFrequency !== 'daily' && reminderDays.length === 0)) &&
+                  (reminderTimes.length === 0 || (reminderFrequency !== 'daily' && reminderDays.length === 0)) &&
                     styles.saveButtonDisabled,
                 ]}
                 onPress={saveReminder}
                 disabled={
-                  !reminderTime || (reminderFrequency !== 'daily' && reminderDays.length === 0)
+                  reminderTimes.length === 0 || (reminderFrequency !== 'daily' && reminderDays.length === 0)
                 }>
                 <Text style={styles.saveButtonText}>Save</Text>
               </TouchableOpacity>
@@ -1218,5 +1259,64 @@ const styles = StyleSheet.create({
     ...Typography.body,
     fontWeight: '600',
     color: Colors.error,
+  },
+  timePickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timePickerModalContent: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    width: '90%',
+    maxWidth: 400,
+    ...Shadows.large,
+  },
+  timePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.base,
+    paddingBottom: Spacing.base,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  timePickerTitle: {
+    ...Typography.h3,
+    color: Colors.textPrimary,
+  },
+  timePickerCloseButton: {
+    padding: Spacing.xs,
+  },
+  timePickerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: Spacing.base,
+    marginTop: Spacing.base,
+    paddingTop: Spacing.base,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  timePickerCancelButton: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  timePickerCancelText: {
+    ...Typography.body,
+    color: Colors.textSecondary,
+    fontWeight: '600',
+  },
+  timePickerConfirmButton: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.md,
+  },
+  timePickerConfirmText: {
+    ...Typography.body,
+    color: Colors.textOnDark,
+    fontWeight: '600',
   },
 });
