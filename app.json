@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "bolt-expo-nativewind",
-    "slug": "bolt-expo-nativewind",
+    "name": "MedCheck",
+    "slug": "medcheck",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "myapp",
+    "scheme": "medcheck",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
@@ -13,12 +13,17 @@
       "infoPlist": {
         "NSUserNotificationsUsageDescription": "This app uses notifications to remind you to take your medications on time."
       },
-      "bundleIdentifier": "com.anonymous.bolt-expo-nativewind"
+      "bundleIdentifier": "com.medcheck.app"
     },
     "android": {
+      "package": "com.medcheck.app",
       "permissions": [
         "POST_NOTIFICATIONS"
-      ]
+      ],
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/icon.png",
+        "backgroundColor": "#007AFF"
+      }
     },
     "web": {
       "bundler": "metro",
