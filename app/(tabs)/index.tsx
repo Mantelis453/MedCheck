@@ -659,20 +659,61 @@ export default function MedicationsScreen() {
                         </Text>
                       </TouchableOpacity>
 
-                      {showTimePicker && (
-                        <DateTimePicker
-                          value={newReminderTime || new Date()}
-                          mode="time"
-                          is24Hour={false}
-                          display="default"
-                          onChange={(event, selectedDate) => {
-                            setShowTimePicker(Platform.OS === 'web' ? true : false);
-                            if (selectedDate) {
-                              setNewReminderTime(selectedDate);
-                            }
-                          }}
-                        />
-                      )}
+                      {/* Time Picker Modal */}
+                      <Modal
+                        visible={showTimePicker}
+                        transparent={true}
+                        animationType="fade"
+                        onRequestClose={() => setShowTimePicker(false)}>
+                        <TouchableOpacity
+                          style={styles.timePickerModalOverlay}
+                          activeOpacity={1}
+                          onPress={() => setShowTimePicker(false)}>
+                          <View style={styles.timePickerModalContent}>
+                            <View style={styles.timePickerHeader}>
+                              <Text style={styles.timePickerTitle}>Select Time</Text>
+                              <TouchableOpacity
+                                onPress={() => setShowTimePicker(false)}
+                                style={styles.timePickerCloseButton}>
+                                <X size={20} color={Colors.text.primary} />
+                              </TouchableOpacity>
+                            </View>
+                            <DateTimePicker
+                              value={newReminderTime || new Date()}
+                              mode="time"
+                              is24Hour={false}
+                              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                              onChange={(event, selectedDate) => {
+                                if (selectedDate) {
+                                  if (Platform.OS === 'android') {
+                                    setNewReminderTime(selectedDate);
+                                    setShowTimePicker(false);
+                                  } else {
+                                    setNewReminderTime(selectedDate);
+                                  }
+                                }
+                              }}
+                            />
+                            {Platform.OS === 'ios' && (
+                              <View style={styles.timePickerActions}>
+                                <TouchableOpacity
+                                  style={styles.timePickerCancelButton}
+                                  onPress={() => {
+                                    setShowTimePicker(false);
+                                    setNewReminderTime(null);
+                                  }}>
+                                  <Text style={styles.timePickerCancelText}>Cancel</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                  style={styles.timePickerConfirmButton}
+                                  onPress={() => setShowTimePicker(false)}>
+                                  <Text style={styles.timePickerConfirmText}>Done</Text>
+                                </TouchableOpacity>
+                              </View>
+                            )}
+                          </View>
+                        </TouchableOpacity>
+                      </Modal>
 
                       <View style={styles.reminderActions}>
                         {newReminderTime && (
@@ -1038,6 +1079,65 @@ const styles = StyleSheet.create({
   saveReminderText: {
     color: Colors.card,
     ...Typography.button,
+  },
+  timePickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  timePickerModalContent: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    width: '90%',
+    maxWidth: 400,
+    ...Shadows.lg,
+  },
+  timePickerHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.base,
+    paddingBottom: Spacing.base,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  timePickerTitle: {
+    ...Typography.h3,
+    color: Colors.text.primary,
+  },
+  timePickerCloseButton: {
+    padding: Spacing.xs,
+  },
+  timePickerActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: Spacing.base,
+    marginTop: Spacing.base,
+    paddingTop: Spacing.base,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  timePickerCancelButton: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+  },
+  timePickerCancelText: {
+    ...Typography.body,
+    color: Colors.text.secondary,
+    fontWeight: '600',
+  },
+  timePickerConfirmButton: {
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.md,
+  },
+  timePickerConfirmText: {
+    ...Typography.body,
+    color: Colors.textOnDark,
+    fontWeight: '600',
   },
   recommendedDosageSection: {
     backgroundColor: `${Colors.primary}08`,

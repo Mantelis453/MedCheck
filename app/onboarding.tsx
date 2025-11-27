@@ -11,17 +11,18 @@ import {
   ActivityIndicator,
   Alert,
   AccessibilityInfo,
+  Modal,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Colors, Spacing, BorderRadius, Typography, Shadows } from '@/constants/design';
-import { ChevronRight, Check, Info } from 'lucide-react-native';
+import { ChevronRight, Check, Info, X } from 'lucide-react-native';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import Slider from '@react-native-community/slider';
 import SearchableMultiSelect from '@/components/SearchableMultiSelect';
-import { COMMON_ALLERGIES } from '@/constants/medical';
+import { COMMON_ALLERGIES, COMMON_CONDITIONS } from '@/constants/medical';
 
 interface OnboardingData {
   name: string;
@@ -34,6 +35,7 @@ interface OnboardingData {
     alcoholUse: 'none' | 'occasional' | 'regular';
   };
   allergies: string[];
+  medicalConditions?: string[];
   emergencyContact?: {
     name: string;
     phone: string;
@@ -48,7 +50,7 @@ interface OnboardingData {
   familyMedicalHistory?: string[];
 }
 
-type FormStep = 'basic' | 'physical' | 'lifestyle' | 'allergies' | 'emergency' | 'biometric' | 'medication' | 'family' | 'review';
+type FormStep = 'basic' | 'physical' | 'lifestyle' | 'allergies' | 'conditions' | 'emergency' | 'biometric' | 'medication' | 'family' | 'review';
 
 interface ValidationErrors {
   name?: string;
@@ -83,6 +85,7 @@ export default function OnboardingScreen() {
     heightCm: null,
     weightKg: null,
     allergies: [],
+    medicalConditions: [],
   });
   
   // Slider values - initialize with default values
@@ -118,6 +121,7 @@ export default function OnboardingScreen() {
       physical: 'Physical Information',
       lifestyle: 'Lifestyle Factors',
       allergies: 'Allergies',
+      conditions: 'Medical Conditions',
       emergency: 'Emergency Contact',
       biometric: 'Biometric Data',
       medication: 'Medication History',
@@ -191,12 +195,12 @@ export default function OnboardingScreen() {
   };
 
   const getCurrentStepIndex = (): number => {
-    const steps: FormStep[] = ['basic', 'physical', 'lifestyle', 'allergies', 'emergency', 'biometric', 'medication', 'family', 'review'];
+    const steps: FormStep[] = ['basic', 'physical', 'lifestyle', 'allergies', 'conditions', 'emergency', 'biometric', 'medication', 'family', 'review'];
     return steps.indexOf(currentStep);
   };
 
   const getProgressPercentage = (): number => {
-    const totalSteps = 9;
+    const totalSteps = 10;
     return Math.round(((getCurrentStepIndex() + 1) / totalSteps) * 100);
   };
 
@@ -358,6 +362,7 @@ export default function OnboardingScreen() {
         break;
       case 'lifestyle':
       case 'allergies':
+      case 'conditions':
       case 'biometric':
       case 'medication':
       case 'family':
@@ -380,7 +385,7 @@ export default function OnboardingScreen() {
   const handleNext = () => {
     if (!validateStep(currentStep)) return;
 
-    const stepOrder: FormStep[] = ['basic', 'physical', 'lifestyle', 'allergies', 'emergency', 'biometric', 'medication', 'family', 'review'];
+    const stepOrder: FormStep[] = ['basic', 'physical', 'lifestyle', 'allergies', 'conditions', 'emergency', 'biometric', 'medication', 'family', 'review'];
     const currentIndex = stepOrder.indexOf(currentStep);
     if (currentIndex < stepOrder.length - 1) {
       setCurrentStep(stepOrder[currentIndex + 1]);
@@ -388,7 +393,7 @@ export default function OnboardingScreen() {
   };
 
   const handleBack = () => {
-    const stepOrder: FormStep[] = ['basic', 'physical', 'lifestyle', 'allergies', 'emergency', 'biometric', 'medication', 'family', 'review'];
+    const stepOrder: FormStep[] = ['basic', 'physical', 'lifestyle', 'allergies', 'conditions', 'emergency', 'biometric', 'medication', 'family', 'review'];
     const currentIndex = stepOrder.indexOf(currentStep);
     if (currentIndex > 0) {
       setCurrentStep(stepOrder[currentIndex - 1]);
@@ -399,6 +404,10 @@ export default function OnboardingScreen() {
   const handleDateSelect = (event: any, selectedDate?: Date) => {
     if (Platform.OS === 'android') {
       setShowDatePicker(false);
+      // Handle cancellation on Android
+      if (event.type === 'dismissed') {
+        return;
+      }
     }
     if (selectedDate) {
       setTempDate(selectedDate);
@@ -452,7 +461,7 @@ export default function OnboardingScreen() {
         date_of_birth: formData.dateOfBirth,
         gender: formData.sex,
         allergies: formData.allergies || [],
-        medical_conditions: [], // Keep for compatibility
+        medical_conditions: formData.medicalConditions || [],
         onboarding_completed: true,
       };
 
@@ -577,7 +586,7 @@ export default function OnboardingScreen() {
   };
 
   const renderStepIndicator = () => {
-    const steps: FormStep[] = ['basic', 'physical', 'lifestyle', 'allergies', 'emergency', 'biometric', 'medication', 'family', 'review'];
+    const steps: FormStep[] = ['basic', 'physical', 'lifestyle', 'allergies', 'conditions', 'emergency', 'biometric', 'medication', 'family', 'review'];
     const currentIndex = steps.indexOf(currentStep);
     const progress = getProgressPercentage();
 
@@ -720,75 +729,59 @@ export default function OnboardingScreen() {
         </View>
       </View>
 
-      {showDatePicker && Platform.OS === 'web' && (
-        <View style={styles.pickerContainer}>
-          <View style={styles.pickerHeader}>
-            <Text style={styles.pickerTitle}>Select Date of Birth</Text>
+      {/* Date Picker Modal */}
+      <Modal
+        visible={showDatePicker}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setShowDatePicker(false)}>
+        <TouchableOpacity
+          style={styles.datePickerModalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowDatePicker(false)}>
+          <View style={styles.datePickerModalContent}>
+            <View style={styles.pickerHeader}>
+              <Text style={styles.pickerTitle}>Select Date of Birth</Text>
+              <TouchableOpacity
+                onPress={() => setShowDatePicker(false)}
+                style={styles.datePickerCloseButton}>
+                <X size={20} color={Colors.text.primary} />
+              </TouchableOpacity>
+            </View>
+            {Platform.OS === 'ios' && (
+              <Text style={styles.pickerSubtitle}>
+                {tempDate.toLocaleDateString('en-US', { 
+                  weekday: 'long', 
+                  year: 'numeric', 
+                  month: 'long', 
+                  day: 'numeric' 
+                })}
+              </Text>
+            )}
+            <View style={styles.datePickerWrapper}>
+              <DateTimePicker
+                value={tempDate}
+                mode="date"
+                display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+                maximumDate={new Date()}
+                onChange={handleDateSelect}
+                style={styles.datePicker}
+              />
+            </View>
+            {Platform.OS === 'ios' && (
+              <View style={styles.pickerActions}>
+                <TouchableOpacity style={styles.cancelButton} onPress={cancelDateSelection}>
+                  <Text style={styles.cancelButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={styles.confirmButton} onPress={confirmDateSelection}>
+                  <Text style={styles.confirmButtonText}>Confirm</Text>
+                </TouchableOpacity>
+              </View>
+            )}
           </View>
-          <TextInput
-            style={styles.webDateInput}
-            type="date"
-            value={formData.dateOfBirth || ''}
-            onChange={(e: any) => {
-              const value = e.target?.value || e.nativeEvent?.text;
-              if (value) {
-                updateFormData({ dateOfBirth: value });
-              }
-            }}
-            max={new Date().toISOString().split('T')[0]}
-          />
-          <View style={styles.pickerActions}>
-            <TouchableOpacity style={styles.cancelButton} onPress={() => setShowDatePicker(false)}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.confirmButton} onPress={() => setShowDatePicker(false)}>
-              <Text style={styles.confirmButtonText}>Done</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {showDatePicker && Platform.OS === 'ios' && (
-        <View style={styles.pickerContainer}>
-          <View style={styles.pickerHeader}>
-            <Text style={styles.pickerTitle}>Select Date of Birth</Text>
-            <Text style={styles.pickerSubtitle}>
-              {tempDate.toLocaleDateString('en-US', {
-                weekday: 'long',
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-              })}
-            </Text>
-          </View>
-          <DateTimePicker
-            value={tempDate}
-            mode="date"
-            display="spinner"
-            maximumDate={new Date()}
-            onChange={handleDateSelect}
-            style={styles.datePicker}
-          />
-          <View style={styles.pickerActions}>
-            <TouchableOpacity style={styles.cancelButton} onPress={cancelDateSelection}>
-              <Text style={styles.cancelButtonText}>Cancel</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.confirmButton} onPress={confirmDateSelection}>
-              <Text style={styles.confirmButtonText}>Confirm</Text>
-          </TouchableOpacity>
-          </View>
-        </View>
-      )}
-
-      {showDatePicker && Platform.OS === 'android' && (
-        <DateTimePicker
-          value={tempDate}
-          mode="date"
-          display="default"
-          maximumDate={new Date()}
-          onChange={handleDateSelect}
-        />
-      )}
+        </TouchableOpacity>
+      </Modal>
+>>>>>>> bd2b699 (Add medical conditions tab, improve date picker modal, add demo note to auth, and fix reminder time picker)
         </View>
   );
 
@@ -1006,6 +999,25 @@ export default function OnboardingScreen() {
           onSelectionChange={(items) => updateFormData({ allergies: items })}
           placeholder="Select allergies..."
         title="Select Allergies"
+        />
+      </View>
+    </View>
+  );
+
+  const renderConditions = () => (
+    <View style={styles.stepContent}>
+      <Text style={styles.stepTitle}>Medical Conditions (Optional)</Text>
+      <Text style={styles.stepDescription}>
+        Select any medical conditions you have. You can also add custom conditions.
+      </Text>
+
+      <View style={styles.formGroup}>
+        <SearchableMultiSelect
+          options={COMMON_CONDITIONS}
+          selectedItems={formData.medicalConditions || []}
+          onSelectionChange={(items) => updateFormData({ medicalConditions: items })}
+          placeholder="Select medical conditions..."
+          title="Select Medical Conditions"
         />
       </View>
     </View>
@@ -1341,6 +1353,15 @@ export default function OnboardingScreen() {
         </Text>
       </View>
 
+      <View style={styles.reviewSection}>
+        <Text style={styles.reviewLabel}>Medical Conditions</Text>
+        <Text style={styles.reviewValue}>
+          {formData.medicalConditions && formData.medicalConditions.length > 0 
+            ? formData.medicalConditions.join(', ') 
+            : 'None'}
+        </Text>
+      </View>
+
       {formData.emergencyContact?.name && (
         <>
           <View style={styles.reviewSection}>
@@ -1403,6 +1424,8 @@ export default function OnboardingScreen() {
         return renderLifestyle();
       case 'allergies':
         return renderAllergies();
+      case 'conditions':
+        return renderConditions();
       case 'emergency':
         return renderEmergencyContact();
       case 'biometric':
@@ -1425,7 +1448,7 @@ export default function OnboardingScreen() {
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Complete Your Profile</Text>
         <Text style={styles.headerSubtitle}>
-          Step {getCurrentStepIndex() + 1} of 9
+          Step {getCurrentStepIndex() + 1} of 10
         </Text>
       </View>
 
@@ -1734,8 +1757,13 @@ const styles = StyleSheet.create({
     ...Shadows.lg,
   },
   pickerHeader: {
-    marginBottom: Spacing.lg,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: Spacing.lg,
+    paddingBottom: Spacing.base,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
   },
   pickerTitle: {
     ...Typography.h3,
@@ -1745,6 +1773,25 @@ const styles = StyleSheet.create({
   pickerSubtitle: {
     ...Typography.body,
     color: Colors.text.secondary,
+    textAlign: 'center',
+    marginBottom: Spacing.base,
+  },
+  datePickerModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  datePickerModalContent: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.lg,
+    padding: Spacing.lg,
+    width: '90%',
+    maxWidth: 400,
+    ...Shadows.lg,
+  },
+  datePickerCloseButton: {
+    padding: Spacing.xs,
   },
   webDateInput: {
     backgroundColor: Colors.card,

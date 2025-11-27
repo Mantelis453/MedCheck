@@ -92,6 +92,10 @@ export default function AuthScreen() {
           <Text style={styles.subtitle}>
             Your AI-powered medication safety assistant
           </Text>
+          {/* TODO: Remove this demo note before production */}
+          <Text style={styles.demoNote}>
+            Note: you can login via any email address and password. Auth not required for demo purposes. Example: email: test@test.com, password: test123
+          </Text>
         </View>
 
         <View style={styles.form}>
@@ -199,6 +203,14 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.textSecondary,
     textAlign: 'center',
+  },
+  demoNote: {
+    ...Typography.bodySmall,
+    color: Colors.textSecondary,
+    textAlign: 'center',
+    marginTop: Spacing.base,
+    fontStyle: 'italic',
+    paddingHorizontal: Spacing.base,
   },
   form: {
     width: '100%',
