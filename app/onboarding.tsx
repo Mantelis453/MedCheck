@@ -671,24 +671,29 @@ export default function OnboardingScreen() {
               setTempDate(new Date(formData.dateOfBirth));
             }
             setShowDatePicker(true);
-          }}>
+          }}
+          accessible={true}
+          accessibilityLabel="Date of birth selector"
+          accessibilityHint="Tap to select your date of birth">
           <View style={styles.dateInputContent}>
-            <Text style={[styles.dateInputText, !formData.dateOfBirth && styles.placeholder]}>
-              {formData.dateOfBirth
-                ? new Date(formData.dateOfBirth).toLocaleDateString('en-US', {
+            {formData.dateOfBirth ? (
+              <View style={styles.dateDisplayContainer}>
+                <Text style={styles.dateInputText}>
+                  {new Date(formData.dateOfBirth).toLocaleDateString('en-US', {
                     year: 'numeric',
                     month: 'long',
                     day: 'numeric',
-                  })
-                : 'Select date of birth'}
-            </Text>
-            {formData.dateOfBirth && (
-              <Text style={styles.dateInputAge}>
-                ({new Date().getFullYear() - new Date(formData.dateOfBirth).getFullYear()} years old)
-              </Text>
+                  })}
+                </Text>
+                <Text style={styles.dateInputAge}>
+                  Age: {new Date().getFullYear() - new Date(formData.dateOfBirth).getFullYear()} years
+                </Text>
+              </View>
+            ) : (
+              <Text style={styles.dateInputPlaceholder}>Tap to select your date of birth</Text>
             )}
           </View>
-          <ChevronRight size={20} color={formData.dateOfBirth ? Colors.primary : Colors.text.secondary} />
+          <ChevronRight size={24} color={formData.dateOfBirth ? Colors.primary : Colors.text.secondary} />
         </TouchableOpacity>
       </View>
 
@@ -1604,29 +1609,40 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: Colors.card,
     borderRadius: BorderRadius.md,
-    padding: Spacing.md,
-    paddingVertical: Spacing.base,
-    borderWidth: 1,
+    padding: Spacing.lg,
+    paddingVertical: Spacing.lg,
+    borderWidth: 2,
     borderColor: Colors.border,
-    minHeight: 64,
-    ...Shadows.sm,
+    minHeight: 72,
+    ...Shadows.md,
   },
   dateInputFilled: {
     borderColor: Colors.primary,
     borderWidth: 2,
+    backgroundColor: `${Colors.primary}08`,
   },
   dateInputContent: {
     flex: 1,
-    marginRight: Spacing.sm,
+    marginRight: Spacing.md,
+  },
+  dateDisplayContainer: {
+    gap: Spacing.xs,
   },
   dateInputText: {
-    ...Typography.bodyLarge,
+    fontSize: 18,
     color: Colors.text.primary,
-    fontWeight: '600',
-    marginBottom: Spacing.xs / 2,
+    fontWeight: '700',
+    lineHeight: 24,
+    letterSpacing: -0.2,
   },
   dateInputAge: {
-    ...Typography.body,
+    fontSize: 15,
+    color: Colors.primary,
+    fontWeight: '600',
+    letterSpacing: 0.2,
+  },
+  dateInputPlaceholder: {
+    fontSize: 16,
     color: Colors.text.secondary,
     fontWeight: '500',
   },
