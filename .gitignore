@@ -28,8 +28,9 @@ yarn-error.*
 *.pem
 
 # local env files
-.env*.local
-.env
+# .env*.local
+# .env
+# NOTE: Environment files are now included in the repository
 
 # typescript
 *.tsbuildinfo

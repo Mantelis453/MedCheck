@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   View,
   Text,
@@ -31,6 +31,7 @@ export default function MedicationsScreen() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [medications, setMedications] = useState<Medication[]>([]);
+  const [previousMedicationIds, setPreviousMedicationIds] = useState<string>('');
   const [checkingInteractions, setCheckingInteractions] = useState(false);
   const [interactionResult, setInteractionResult] = useState<{
     safe: boolean;
@@ -48,6 +49,7 @@ export default function MedicationsScreen() {
   const [newReminderTime, setNewReminderTime] = useState<Date | null>(null);
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [userProfile, setUserProfile] = useState<{ full_name?: string } | null>(null);
+  const [takenMedsCount, setTakenMedsCount] = useState<{ taken: number; total: number }>({ taken: 0, total: 0 });
   const router = useRouter();
 
   useFocusEffect(
@@ -70,8 +72,30 @@ export default function MedicationsScreen() {
           table: 'medications',
           filter: `user_id=eq.${user?.id}`,
         },
-        () => {
-          loadMedications();
+        async () => {
+          // When medications change, reload and check interactions
+          if (!user) return;
+          
+          const { data } = await supabase
+            .from('medications')
+            .select('id, name, generic_name, dosage, frequency, reminder_time, reminder_times, category, created_at')
+            .eq('user_id', user.id)
+            .eq('active', true)
+            .order('created_at', { ascending: false });
+          
+          if (data) {
+            setMedications(data);
+            // Check interactions when medications change (added/removed)
+            if (data.length > 1) {
+              checkInteractions(data, true).catch((err) => {
+                console.error('Interaction check failed:', err);
+              });
+            } else {
+              setInteractionResult({ safe: true, interactions: [], warnings: [] });
+            }
+            // Update taken meds count
+            await loadTakenMedsCount(data);
+          }
         }
       )
       .subscribe();
@@ -99,33 +123,143 @@ export default function MedicationsScreen() {
     }
   };
 
-  const getFirstName = (): string => {
+  const firstName = useMemo((): string => {
     if (!userProfile?.full_name) return '';
     const nameParts = userProfile.full_name.trim().split(/\s+/);
     return nameParts[0] || '';
-  };
+  }, [userProfile?.full_name]);
 
   const loadMedications = async () => {
     if (!user) return;
 
     setLoading(true);
+    // Optimize: Only select fields needed for display
     const { data, error } = await supabase
       .from('medications')
-      .select('*')
+      .select('id, name, generic_name, dosage, frequency, reminder_time, reminder_times, category, created_at')
       .eq('user_id', user.id)
       .eq('active', true)
       .order('created_at', { ascending: false });
 
     if (data) {
+      // Check if medications changed by comparing IDs
+      const currentIds = data.map(m => m.id).sort().join(',');
+      const medicationsChanged = previousMedicationIds !== '' && currentIds !== previousMedicationIds;
+      
       setMedications(data);
-      if (data.length > 0) {
-        await checkInteractions(data);
+      setLoading(false); // Show medications immediately
+      
+      // Load saved interaction results first
+      const hasSavedResult = await loadSavedInteractionResult(data);
+      
+      // Check interactions ONLY if:
+      // 1. Initial load (no previous IDs) and no saved result exists - check on first load only
+      // 2. Medications changed (added/removed) - check when medications actually change
+      // Do NOT check on tab switches if medications haven't changed
+      if (data.length > 1) {
+        const isInitialLoad = previousMedicationIds === '';
+        
+        // Only check on initial load if no saved result, OR if medications changed
+        if (isInitialLoad && !hasSavedResult) {
+          // Initial load with no saved result - check interactions
+          checkInteractions(data, true).catch((err) => {
+            console.error('Interaction check failed:', err);
+          });
+        } else if (medicationsChanged) {
+          // Medications changed - re-check interactions
+          checkInteractions(data, true).catch((err) => {
+            console.error('Interaction check failed:', err);
+          });
+        }
+        // If hasSavedResult and medications haven't changed, use saved result (already set in loadSavedInteractionResult)
+        // If no saved result but not initial load and medications haven't changed, don't check (use existing result or null)
+      } else if (data.length <= 1) {
+        setInteractionResult({ safe: true, interactions: [], warnings: [] });
       }
+      
+      // Update previous IDs for next comparison (after all checks)
+      setPreviousMedicationIds(currentIds);
+      
+      // Load taken meds count for today
+      await loadTakenMedsCount(data);
+    } else {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
-  const checkInteractions = async (meds: Medication[]) => {
+  const loadTakenMedsCount = async (meds: Medication[]) => {
+    if (!user || meds.length === 0) {
+      setTakenMedsCount({ taken: 0, total: meds.length });
+      return;
+    }
+
+    try {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const tomorrow = new Date(today);
+      tomorrow.setDate(tomorrow.getDate() + 1);
+
+      const { data: logs } = await supabase
+        .from('medication_logs')
+        .select('medication_id, status')
+        .eq('user_id', user.id)
+        .gte('scheduled_time', today.toISOString())
+        .lt('scheduled_time', tomorrow.toISOString())
+        .eq('status', 'taken');
+
+      const takenIds = new Set(logs?.map(log => log.medication_id) || []);
+      const takenCount = takenIds.size;
+      
+      setTakenMedsCount({ taken: takenCount, total: meds.length });
+    } catch (error) {
+      console.error('Error loading taken meds count:', error);
+      setTakenMedsCount({ taken: 0, total: meds.length });
+    }
+  };
+
+  const loadSavedInteractionResult = async (meds: Medication[]): Promise<boolean> => {
+    if (!user || meds.length < 2) {
+      setInteractionResult({ safe: true, interactions: [], warnings: [] });
+      return true; // Return true to indicate we have a result (safe state)
+    }
+
+    try {
+      // Get the most recent interaction check for these medications
+      const medicationIds = meds.map(m => m.id).sort();
+      
+      const { data: savedInteractions } = await supabase
+        .from('interactions')
+        .select('analysis, checked_at, medication_ids')
+        .eq('user_id', user.id)
+        .order('checked_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      // Check if saved interaction matches current medication set
+      if (savedInteractions?.analysis && savedInteractions.medication_ids) {
+        const savedIds = Array.isArray(savedInteractions.medication_ids) 
+          ? (savedInteractions.medication_ids as string[]).sort()
+          : [];
+        const currentIdsSorted = [...medicationIds].sort();
+        
+        // Compare arrays by length and content
+        if (savedIds.length === currentIdsSorted.length && 
+            savedIds.every((id, idx) => id === currentIdsSorted[idx])) {
+          // Use saved result
+          setInteractionResult(savedInteractions.analysis as any);
+          return true; // Found saved result
+        }
+      }
+
+      // No saved result found
+      return false;
+    } catch (error) {
+      console.error('Error loading saved interactions:', error);
+      return false;
+    }
+  };
+
+  const checkInteractions = async (meds: Medication[], shouldSave: boolean = true) => {
     if (meds.length < 2) {
       setInteractionResult({ safe: true, interactions: [], warnings: [] });
       return;
@@ -141,11 +275,16 @@ export default function MedicationsScreen() {
         return;
       }
 
-      const { data: profileData } = await supabase
-        .from('user_profiles')
-        .select('*')
-        .eq('user_id', user!.id)
-        .maybeSingle();
+      // Optimize: Reuse cached userProfile or fetch only needed fields
+      let profileData = userProfile;
+      if (!profileData) {
+        const { data } = await supabase
+          .from('user_profiles')
+          .select('date_of_birth, weight, allergies, medical_conditions')
+          .eq('user_id', user!.id)
+          .maybeSingle();
+        profileData = data;
+      }
 
       const result = await checkMedicationInteractions(
         meds.map((m) => ({ name: m.name, dosage: m.dosage || undefined })),
@@ -162,13 +301,16 @@ export default function MedicationsScreen() {
 
       setInteractionResult(result);
 
-      await supabase.from('interactions').insert({
-        user_id: user!.id,
-        medication_ids: meds.map((m) => m.id),
-        analysis: result,
-        severity: result.safe ? 'safe' : result.interactions.some((i) => i.severity === 'critical') ? 'critical' : 'warning',
-        has_warnings: !result.safe,
-      });
+      // Save interaction result to database
+      if (shouldSave) {
+        await supabase.from('interactions').insert({
+          user_id: user!.id,
+          medication_ids: meds.map((m) => m.id),
+          analysis: result,
+          severity: result.safe ? 'safe' : result.interactions.some((i) => i.severity === 'critical') ? 'critical' : 'warning',
+          has_warnings: !result.safe,
+        });
+      }
     } catch (error: any) {
       console.error('Failed to check interactions:', error);
     } finally {
@@ -176,9 +318,9 @@ export default function MedicationsScreen() {
     }
   };
 
-  const handleMedicationPress = (medication: Medication) => {
+  const handleMedicationPress = useCallback((medication: Medication) => {
     router.push(`/(tabs)/medication-detail?id=${medication.id}`);
-  };
+  }, [router]);
 
   const deleteMedication = async (medicationId: string) => {
     const medication = medications.find((m) => m.id === medicationId);
@@ -208,8 +350,22 @@ export default function MedicationsScreen() {
 
               if (error) throw error;
 
-              setMedications(medications.filter((m) => m.id !== medication.id));
+              const updatedMeds = medications.filter((m) => m.id !== medication.id);
+              setMedications(updatedMeds);
               setSelectedMedication(null);
+              
+              // Check interactions after deletion (medications changed)
+              if (updatedMeds.length > 1) {
+                checkInteractions(updatedMeds, true).catch((err) => {
+                  console.error('Interaction check failed:', err);
+                });
+              } else {
+                setInteractionResult({ safe: true, interactions: [], warnings: [] });
+              }
+              
+              // Update taken meds count
+              await loadTakenMedsCount(updatedMeds);
+              
               Alert.alert('Success', 'Medication deleted successfully');
             } catch (error: any) {
               Alert.alert('Error', error.message || 'Failed to delete medication');
@@ -266,7 +422,7 @@ export default function MedicationsScreen() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.greeting}>
-          Hello{getFirstName() ? `, ${getFirstName()}` : ''}
+          Hello{firstName ? `, ${firstName}` : ''}
         </Text>
         <Text style={styles.title}>Your Medications</Text>
       </View>
@@ -283,7 +439,7 @@ export default function MedicationsScreen() {
           </View>
         )}
 
-        {!checkingInteractions && interactionResult && medications.length > 1 && (
+        {!checkingInteractions && interactionResult !== null && medications.length > 1 && (
           <TouchableOpacity
             style={[
               styles.interactionBanner,
@@ -312,7 +468,26 @@ export default function MedicationsScreen() {
           </View>
         ) : (
           <>
-            <Text style={styles.sectionTitle}>Your Medications</Text>
+            <View style={styles.sectionTitleContainer}>
+              <Text style={styles.sectionTitle}>Your Medications</Text>
+              {takenMedsCount.total > 0 && (
+                <View style={[
+                  styles.takenMedsBadge,
+                  takenMedsCount.taken === takenMedsCount.total && styles.takenMedsBadgeGreen,
+                  takenMedsCount.taken > 0 && takenMedsCount.taken < takenMedsCount.total && styles.takenMedsBadgeYellow,
+                  takenMedsCount.taken === 0 && styles.takenMedsBadgeRed,
+                ]}>
+                  <Text style={[
+                    styles.takenMedsText,
+                    takenMedsCount.taken === takenMedsCount.total && styles.takenMedsTextGreen,
+                    takenMedsCount.taken > 0 && takenMedsCount.taken < takenMedsCount.total && styles.takenMedsTextYellow,
+                    takenMedsCount.taken === 0 && styles.takenMedsTextRed,
+                  ]}>
+                    {takenMedsCount.taken}/{takenMedsCount.total}
+                  </Text>
+                </View>
+              )}
+            </View>
             <View style={styles.gridContainer}>
               {medications.map((item) => (
                 <PremiumMedicationCard
@@ -572,13 +747,50 @@ const styles = StyleSheet.create({
     paddingBottom: Platform.OS === 'ios' ? 120 : 100,
     paddingTop: Spacing.sm,
   },
-  sectionTitle: {
-    ...Typography.h3,
-    color: Colors.textPrimary,
+  sectionTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.xl,
     marginBottom: Spacing.base,
     marginTop: Spacing.sm,
+  },
+  sectionTitle: {
+    ...Typography.h3,
+    color: Colors.textPrimary,
     fontWeight: '600',
+    flex: 1,
+  },
+  takenMedsBadge: {
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.md,
+    minWidth: 50,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  takenMedsBadgeGreen: {
+    backgroundColor: `${Colors.success}20`,
+  },
+  takenMedsBadgeYellow: {
+    backgroundColor: `${Colors.warning}20`,
+  },
+  takenMedsBadgeRed: {
+    backgroundColor: `${Colors.error}20`,
+  },
+  takenMedsText: {
+    ...Typography.bodySmall,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  takenMedsTextGreen: {
+    color: Colors.success,
+  },
+  takenMedsTextYellow: {
+    color: Colors.warning,
+  },
+  takenMedsTextRed: {
+    color: Colors.error,
   },
   gridContainer: {
     flexDirection: 'row',

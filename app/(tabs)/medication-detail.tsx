@@ -75,11 +75,23 @@ export default function MedicationDetail() {
     try {
       setLoading(true);
 
-      const { data: medData, error: medError } = await supabase
-        .from('medications')
-        .select('*')
-        .eq('id', id)
-        .maybeSingle();
+      // Parallelize queries for better performance
+      const [medQuery, logsQuery] = await Promise.all([
+        supabase
+          .from('medications')
+          .select('*')
+          .eq('id', id)
+          .maybeSingle(),
+        supabase
+          .from('medication_logs')
+          .select('id, scheduled_time, taken_at, status, confirmed_via, notes')
+          .eq('medication_id', id)
+          .order('scheduled_time', { ascending: false })
+          .limit(100) // Limit to last 100 entries for performance
+      ]);
+
+      const { data: medData, error: medError } = medQuery;
+      const { data: logsData, error: logsError } = logsQuery;
 
       if (medError) throw medError;
       setMedication(medData);
@@ -94,12 +106,6 @@ export default function MedicationDetail() {
           setReminderTimes([]);
         }
       }
-
-      const { data: logsData, error: logsError } = await supabase
-        .from('medication_logs')
-        .select('*')
-        .eq('medication_id', id)
-        .order('scheduled_time', { ascending: false });
 
       if (logsError) {
         // Handle table not found error gracefully
@@ -298,6 +304,54 @@ export default function MedicationDetail() {
     }
   };
 
+  const deleteMedication = async () => {
+    if (!medication || !user) return;
+
+    Alert.alert(
+      'Delete Medication',
+      `Are you sure you want to delete ${medication.name}? This action cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              // Cancel any active reminders
+              if (medication.reminder_time || (medication.reminder_times && medication.reminder_times.length > 0)) {
+                await cancelMedicationReminder(medication.id);
+              }
+
+              // Delete the medication
+              const { error } = await supabase
+                .from('medications')
+                .delete()
+                .eq('id', medication.id);
+
+              if (error) throw error;
+
+              // Navigate back to home page
+              Alert.alert('Success', 'Medication deleted successfully', [
+                {
+                  text: 'OK',
+                  onPress: () => {
+                    router.replace('/(tabs)/index');
+                  },
+                },
+              ]);
+            } catch (error: any) {
+              console.error('Error deleting medication:', error);
+              Alert.alert('Error', error?.message || 'Failed to delete medication');
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const addReminderTime = () => {
     if (reminderTime) {
       const timeString = reminderTime.toTimeString().slice(0, 5);
@@ -405,7 +459,10 @@ export default function MedicationDetail() {
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView style={styles.content} showsVerticalScrollIndicator={false}>
+      <ScrollView 
+        style={styles.content} 
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}>
         <View style={styles.medicationCard}>
           <Text style={styles.medicationName}>{medication.name}</Text>
           {medication.generic_name && (
@@ -624,6 +681,17 @@ export default function MedicationDetail() {
               ))}
           </View>
         )}
+
+        {/* Delete Medication Section */}
+        <View style={styles.deleteSection}>
+          <TouchableOpacity
+            style={styles.deleteButton}
+            onPress={deleteMedication}
+            activeOpacity={0.7}>
+            <Trash2 size={20} color={Colors.error} />
+            <Text style={styles.deleteButtonText}>Delete Medication</Text>
+          </TouchableOpacity>
+        </View>
       </ScrollView>
 
       <Modal
@@ -782,8 +850,10 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
+  },
+  scrollContent: {
     padding: Spacing.lg,
-    paddingBottom: Platform.OS === 'ios' ? 120 : 100,
+    paddingBottom: Platform.OS === 'ios' ? 150 : 130,
   },
   medicationCard: {
     backgroundColor: Colors.surface,
@@ -1125,5 +1195,28 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.textOnDark,
     fontWeight: '600',
+  },
+  deleteSection: {
+    marginTop: Spacing.xl,
+    marginBottom: Spacing.xxl,
+    paddingTop: Spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  deleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    backgroundColor: `${Colors.error}10`,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 2,
+    borderColor: Colors.error,
+  },
+  deleteButtonText: {
+    ...Typography.body,
+    fontWeight: '600',
+    color: Colors.error,
   },
 });

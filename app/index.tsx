@@ -75,6 +75,8 @@ export default function Index() {
     return <Redirect href="/onboarding" />;
   }
 
+  // Redirect to home page (tabs index) as default route
+  // Using tabs root which defaults to index tab
   return <Redirect href="/(tabs)" />;
 }
 

@@ -1,3 +1,4 @@
+import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Pill, Trash2, Clock } from 'lucide-react-native';
 import { Medication } from '@/types/database';
@@ -10,11 +11,11 @@ interface MedicationCardProps {
   onPress: (medication: Medication) => void;
 }
 
-export default function MedicationCard({
+const MedicationCard = React.memo(({
   medication,
   onDelete,
   onPress,
-}: MedicationCardProps) {
+}: MedicationCardProps) => {
   return (
     <TouchableOpacity
       style={styles.card}
@@ -55,7 +56,11 @@ export default function MedicationCard({
       </TouchableOpacity>
     </TouchableOpacity>
   );
-}
+});
+
+MedicationCard.displayName = 'MedicationCard';
+
+export default MedicationCard;
 
 const styles = StyleSheet.create({
   card: {

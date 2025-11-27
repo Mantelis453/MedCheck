@@ -347,20 +347,23 @@ export default function ScanScreen() {
         console.warn('Failed to clear AsyncStorage:', error);
       }
       
-      // Reset state and close modal first
+      // Reset state - closing modal by setting medicationInfo to null
       setCapturedImage(null);
-      setMedicationInfo(null);
+      setMedicationInfo(null); // This closes the modal
       setReminderTime(null);
       setSelectedCategory('otc');
       
-      // Navigate immediately after resetting (modal will close)
-      // Use a small delay to ensure state updates complete
+      // Navigate to home page immediately (modal will close automatically)
+      // Use a small delay to ensure modal state updates
       setTimeout(() => {
-        router.replace('/(tabs)/index' as any);
-      }, 50);
+        // Navigate to home - using the same route as default route
+        router.replace('/(tabs)/index');
+      }, 100);
       
-      // Show success alert
-      Alert.alert('Success', 'Medication added successfully');
+      // Show success message after navigation (non-blocking)
+      setTimeout(() => {
+        Alert.alert('Success', 'Medication added successfully');
+      }, 300);
     } catch (error: any) {
       console.error('Save medication error:', error);
       const errorMessage = error?.message || 'Failed to save medication. Please try again.';

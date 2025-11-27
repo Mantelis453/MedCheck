@@ -27,7 +27,7 @@ const categoryLabels: Record<string, string> = {
   supplement: 'Supp',
 };
 
-export default function PremiumMedicationCard({ medication, onPress }: PremiumMedicationCardProps) {
+const PremiumMedicationCard = React.memo(({ medication, onPress }: PremiumMedicationCardProps) => {
   // Select gradient based on medication category
   const gradient = medication.category
     ? categoryGradients[medication.category] || defaultGradient
@@ -88,7 +88,11 @@ export default function PremiumMedicationCard({ medication, onPress }: PremiumMe
       </LinearGradient>
     </TouchableOpacity>
   );
-}
+});
+
+PremiumMedicationCard.displayName = 'PremiumMedicationCard';
+
+export default PremiumMedicationCard;
 
 const styles = StyleSheet.create({
   card: {

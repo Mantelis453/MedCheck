@@ -171,8 +171,8 @@ export default function ProfileScreen() {
           if (isNaN(num)) {
             return 'Please enter a valid weight';
           }
-          if (num < 2 || num > 400) {
-            return 'Weight must be between 2-400 kg';
+          if (num < 2 || num > 200) {
+            return 'Weight must be between 2-200 kg';
           }
         }
         return undefined;

@@ -257,8 +257,8 @@ export default function OnboardingScreen() {
       
       case 'weightKg':
         if (value !== null && value !== undefined) {
-          if (value < 2 || value > 400) {
-            return 'Weight must be between 2-400 kg';
+          if (value < 2 || value > 200) {
+            return 'Weight must be between 2-200 kg';
           }
         }
         return undefined;
@@ -728,14 +728,16 @@ export default function OnboardingScreen() {
               })}
             </Text>
           </View>
-          <DateTimePicker
-            value={tempDate}
-            mode="date"
-            display="spinner"
-            maximumDate={new Date()}
-            onChange={handleDateSelect}
-            style={styles.datePicker}
-          />
+          <View style={styles.datePickerWrapper}>
+            <DateTimePicker
+              value={tempDate}
+              mode="date"
+              display="spinner"
+              maximumDate={new Date()}
+              onChange={handleDateSelect}
+              style={styles.datePicker}
+            />
+          </View>
           <View style={styles.pickerActions}>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelDateSelection}>
               <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -829,7 +831,7 @@ export default function OnboardingScreen() {
         <Slider
           style={styles.slider}
           minimumValue={2}
-          maximumValue={400}
+          maximumValue={200}
           step={1}
           value={weightValue}
           onValueChange={(value) => {
@@ -865,7 +867,7 @@ export default function OnboardingScreen() {
         />
         <View style={styles.sliderRange}>
           <Text style={styles.sliderRangeText}>2 kg</Text>
-          <Text style={styles.sliderRangeText}>400 kg</Text>
+          <Text style={styles.sliderRangeText}>200 kg</Text>
         </View>
         <View style={styles.inputFooter}>
           {validationErrors.weightKg ? (
@@ -1686,6 +1688,7 @@ const styles = StyleSheet.create({
     borderRadius: BorderRadius.lg,
     padding: Spacing.lg,
     marginTop: Spacing.md,
+    opacity: 1,
     ...Shadows.lg,
   },
   pickerHeader: {
@@ -1701,9 +1704,18 @@ const styles = StyleSheet.create({
     ...Typography.body,
     color: Colors.text.secondary,
   },
+  datePickerWrapper: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.md,
+    marginVertical: Spacing.md,
+    overflow: 'hidden',
+    opacity: 1,
+  },
   datePicker: {
     height: 200,
-    marginVertical: Spacing.md,
+    width: '100%',
+    backgroundColor: Colors.card,
+    opacity: 1,
   },
   pickerActions: {
     flexDirection: 'row',
