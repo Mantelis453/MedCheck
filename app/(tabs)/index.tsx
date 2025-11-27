@@ -1,0 +1,889 @@
+import { useState, useEffect } from 'react';
+import {
+  View,
+  Text,
+  StyleSheet,
+  FlatList,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  Modal,
+  ScrollView,
+  Platform,
+} from 'react-native';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
+import { Medication } from '@/types/database';
+import MedicationCard from '@/components/MedicationCard';
+import PremiumMedicationCard from '@/components/PremiumMedicationCard';
+import { Colors, Spacing, BorderRadius, Typography, Shadows } from '@/constants/design';
+import { AlertCircle, CheckCircle, X, Clock, Edit2, Trash2 } from 'lucide-react-native';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import { checkMedicationInteractions } from '@/services/gemini';
+import { useRouter, useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
+import {
+  scheduleMedicationReminder,
+  cancelMedicationReminder,
+} from '@/services/notifications';
+
+export default function MedicationsScreen() {
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [medications, setMedications] = useState<Medication[]>([]);
+  const [checkingInteractions, setCheckingInteractions] = useState(false);
+  const [interactionResult, setInteractionResult] = useState<{
+    safe: boolean;
+    interactions: Array<{
+      drug1: string;
+      drug2: string;
+      severity: 'low' | 'moderate' | 'high' | 'critical';
+      description: string;
+    }>;
+    warnings: string[];
+  } | null>(null);
+  const [showInteractions, setShowInteractions] = useState(false);
+  const [selectedMedication, setSelectedMedication] = useState<Medication | null>(null);
+  const [editingReminder, setEditingReminder] = useState(false);
+  const [newReminderTime, setNewReminderTime] = useState<Date | null>(null);
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [userProfile, setUserProfile] = useState<{ full_name?: string } | null>(null);
+  const router = useRouter();
+
+  useFocusEffect(
+    useCallback(() => {
+      loadMedications();
+    }, [user])
+  );
+
+  useEffect(() => {
+    loadMedications();
+    loadUserProfile();
+
+    const subscription = supabase
+      .channel('medications_changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'medications',
+          filter: `user_id=eq.${user?.id}`,
+        },
+        () => {
+          loadMedications();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, [user]);
+
+  const loadUserProfile = async () => {
+    if (!user) return;
+
+    try {
+      const { data } = await supabase
+        .from('user_profiles')
+        .select('full_name')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (data) {
+        setUserProfile(data);
+      }
+    } catch (error) {
+      console.error('Error loading user profile:', error);
+    }
+  };
+
+  const getFirstName = (): string => {
+    if (!userProfile?.full_name) return '';
+    const nameParts = userProfile.full_name.trim().split(/\s+/);
+    return nameParts[0] || '';
+  };
+
+  const loadMedications = async () => {
+    if (!user) return;
+
+    setLoading(true);
+    const { data, error } = await supabase
+      .from('medications')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('active', true)
+      .order('created_at', { ascending: false });
+
+    if (data) {
+      setMedications(data);
+      if (data.length > 0) {
+        await checkInteractions(data);
+      }
+    }
+    setLoading(false);
+  };
+
+  const checkInteractions = async (meds: Medication[]) => {
+    if (meds.length < 2) {
+      setInteractionResult({ safe: true, interactions: [], warnings: [] });
+      return;
+    }
+
+    setCheckingInteractions(true);
+    try {
+      const apiKey = process.env.EXPO_PUBLIC_GEMINI_API_KEY;
+      if (!apiKey || apiKey === 'your-gemini-api-key' || apiKey.trim() === '') {
+        console.warn('Gemini API key not configured or using placeholder. Skipping interaction check.');
+        setInteractionResult({ safe: true, interactions: [], warnings: [] });
+        setCheckingInteractions(false);
+        return;
+      }
+
+      const { data: profileData } = await supabase
+        .from('user_profiles')
+        .select('*')
+        .eq('user_id', user!.id)
+        .maybeSingle();
+
+      const result = await checkMedicationInteractions(
+        meds.map((m) => ({ name: m.name, dosage: m.dosage || undefined })),
+        {
+          age: profileData?.date_of_birth
+            ? new Date().getFullYear() - new Date(profileData.date_of_birth).getFullYear()
+            : null,
+          weight: profileData?.weight || null,
+          allergies: profileData?.allergies || [],
+          conditions: profileData?.medical_conditions || [],
+        },
+        apiKey
+      );
+
+      setInteractionResult(result);
+
+      await supabase.from('interactions').insert({
+        user_id: user!.id,
+        medication_ids: meds.map((m) => m.id),
+        analysis: result,
+        severity: result.safe ? 'safe' : result.interactions.some((i) => i.severity === 'critical') ? 'critical' : 'warning',
+        has_warnings: !result.safe,
+      });
+    } catch (error: any) {
+      console.error('Failed to check interactions:', error);
+    } finally {
+      setCheckingInteractions(false);
+    }
+  };
+
+  const handleMedicationPress = (medication: Medication) => {
+    router.push(`/(tabs)/medication-detail?id=${medication.id}`);
+  };
+
+  const deleteMedication = async (medicationId: string) => {
+    const medication = medications.find((m) => m.id === medicationId);
+    if (!medication) return;
+
+    Alert.alert(
+      'Delete Medication',
+      `Are you sure you want to delete ${medication.name}?`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              if (medication.reminder_time) {
+                await cancelMedicationReminder(medication.id);
+              }
+
+              const { error } = await supabase
+                .from('medications')
+                .delete()
+                .eq('id', medication.id);
+
+              if (error) throw error;
+
+              setMedications(medications.filter((m) => m.id !== medication.id));
+              setSelectedMedication(null);
+              Alert.alert('Success', 'Medication deleted successfully');
+            } catch (error: any) {
+              Alert.alert('Error', error.message || 'Failed to delete medication');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  const updateReminder = async () => {
+    if (!selectedMedication) return;
+
+    const timeString = newReminderTime
+      ? newReminderTime.toTimeString().slice(0, 5)
+      : null;
+
+    const { error } = await supabase
+      .from('medications')
+      .update({
+        reminder_time: timeString,
+      })
+      .eq('id', selectedMedication.id);
+
+    if (error) {
+      Alert.alert('Error', 'Failed to update reminder');
+    } else {
+      if (timeString) {
+        await scheduleMedicationReminder(
+          selectedMedication.name,
+          timeString,
+          selectedMedication.id
+        );
+      } else {
+        await cancelMedicationReminder(selectedMedication.id);
+      }
+
+      Alert.alert('Success', 'Reminder updated');
+      setEditingReminder(false);
+      setSelectedMedication(null);
+      loadMedications();
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color="#007AFF" />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <Text style={styles.greeting}>
+          Hello{getFirstName() ? `, ${getFirstName()}` : ''}
+        </Text>
+        <Text style={styles.title}>Your Medications</Text>
+      </View>
+
+      <ScrollView
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {checkingInteractions && (
+          <View style={styles.checkingBanner}>
+            <ActivityIndicator size="small" color={Colors.accent} />
+            <Text style={styles.checkingText}>Checking interactions...</Text>
+          </View>
+        )}
+
+        {!checkingInteractions && interactionResult && medications.length > 1 && (
+          <TouchableOpacity
+            style={[
+              styles.interactionBanner,
+              interactionResult.safe ? styles.safeBanner : styles.warningBanner,
+            ]}
+            onPress={() => setShowInteractions(true)}>
+            {interactionResult.safe ? (
+              <CheckCircle size={20} color={Colors.success} />
+            ) : (
+              <AlertCircle size={20} color={Colors.warning} />
+            )}
+            <Text style={styles.interactionText}>
+              {interactionResult.safe
+                ? 'No interactions detected'
+                : `${interactionResult.interactions.length} interaction${interactionResult.interactions.length > 1 ? 's' : ''} found`}
+            </Text>
+          </TouchableOpacity>
+        )}
+
+        {medications.length === 0 ? (
+          <View style={styles.empty}>
+            <Text style={styles.emptyText}>No medications added yet</Text>
+            <Text style={styles.emptySubtext}>
+              Use the scan tab to add your first medication
+            </Text>
+          </View>
+        ) : (
+          <>
+            <Text style={styles.sectionTitle}>Your Medications</Text>
+            <View style={styles.gridContainer}>
+              {medications.map((item) => (
+                <PremiumMedicationCard
+                  key={item.id}
+                  medication={item}
+                  onPress={handleMedicationPress}
+                />
+              ))}
+            </View>
+          </>
+        )}
+      </ScrollView>
+
+      <Modal
+        visible={showInteractions}
+        animationType="slide"
+        presentationStyle="pageSheet">
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Interaction Check</Text>
+            <TouchableOpacity onPress={() => setShowInteractions(false)}>
+              <X size={28} color="#000" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {interactionResult?.safe ? (
+              <View style={styles.safeContainer}>
+                <CheckCircle size={48} color="#34C759" />
+                <Text style={styles.safeTitle}>All Clear</Text>
+                <Text style={styles.safeText}>
+                  No significant interactions detected between your medications.
+                </Text>
+              </View>
+            ) : (
+              <>
+                {interactionResult?.interactions.map((interaction, index) => (
+                  <View key={index} style={styles.interactionCard}>
+                    <View style={[
+                      styles.severityBadge,
+                      styles[`severity_${interaction.severity}`],
+                    ]}>
+                      <Text style={styles.severityText}>
+                        {interaction.severity.toUpperCase()}
+                      </Text>
+                    </View>
+                    <Text style={styles.interactionDrugs}>
+                      {interaction.drug1} + {interaction.drug2}
+                    </Text>
+                    <Text style={styles.interactionDesc}>
+                      {interaction.description}
+                    </Text>
+                  </View>
+                ))}
+
+                {interactionResult?.warnings.map((warning: string, index: number) => (
+                  <View key={index} style={styles.warningCard}>
+                    <AlertCircle size={20} color="#FF9500" />
+                    <Text style={styles.warningText}>{warning}</Text>
+                  </View>
+                ))}
+              </>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={!!selectedMedication}
+        animationType="slide"
+        presentationStyle="pageSheet">
+        <View style={styles.modal}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Medication Details</Text>
+            <TouchableOpacity onPress={() => setSelectedMedication(null)}>
+              <X size={28} color="#000" />
+            </TouchableOpacity>
+          </View>
+
+          <ScrollView style={styles.modalContent}>
+            {selectedMedication && (
+              <View>
+                <Text style={styles.detailName}>{selectedMedication.name}</Text>
+                {selectedMedication.generic_name && (
+                  <Text style={styles.detailGeneric}>
+                    {selectedMedication.generic_name}
+                  </Text>
+                )}
+
+                {selectedMedication.dosage && (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailLabel}>Dosage</Text>
+                    <Text style={styles.detailValue}>{selectedMedication.dosage}</Text>
+                  </View>
+                )}
+
+                {selectedMedication.frequency && (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailLabel}>Frequency</Text>
+                    <Text style={styles.detailValue}>{selectedMedication.frequency}</Text>
+                  </View>
+                )}
+
+                {selectedMedication.description && (
+                  <View style={styles.detailSection}>
+                    <Text style={styles.detailLabel}>Description</Text>
+                    <Text style={styles.detailValue}>
+                      {selectedMedication.description}
+                    </Text>
+                  </View>
+                )}
+
+                {selectedMedication.recommended_dosage && (
+                  <View style={[styles.detailSection, styles.recommendedDosageSection]}>
+                    <Text style={styles.recommendedDosageTitle}>
+                      {selectedMedication.is_prescription ? '💊 Prescription Guidance' : '💡 Recommended Dosage'}
+                    </Text>
+
+                    <View style={styles.recommendedDosageRow}>
+                      <Text style={styles.recommendedDosageLabel}>Dosage:</Text>
+                      <Text style={styles.recommendedDosageValue}>{selectedMedication.recommended_dosage}</Text>
+                    </View>
+
+                    {selectedMedication.recommended_frequency && (
+                      <View style={styles.recommendedDosageRow}>
+                        <Text style={styles.recommendedDosageLabel}>Frequency:</Text>
+                        <Text style={styles.recommendedDosageValue}>{selectedMedication.recommended_frequency}</Text>
+                      </View>
+                    )}
+
+                    {selectedMedication.dosage_notes && (
+                      <View style={styles.recommendedDosageNotes}>
+                        <Text style={styles.recommendedDosageNotesText}>{selectedMedication.dosage_notes}</Text>
+                      </View>
+                    )}
+                  </View>
+                )}
+
+                <View style={styles.detailSection}>
+                  <View style={styles.reminderHeader}>
+                    <Text style={styles.detailLabel}>Reminder</Text>
+                    <TouchableOpacity
+                      style={styles.editButton}
+                      onPress={() => setEditingReminder(!editingReminder)}>
+                      <Edit2 size={16} color="#007AFF" />
+                      <Text style={styles.editButtonText}>
+                        {editingReminder ? 'Cancel' : 'Edit'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  {!editingReminder ? (
+                    <Text style={styles.detailValue}>
+                      {selectedMedication.reminder_time || 'No reminder set'}
+                    </Text>
+                  ) : (
+                    <View>
+                      <TouchableOpacity
+                        style={styles.timeButton}
+                        onPress={() => setShowTimePicker(true)}>
+                        <Clock size={20} color="#666" />
+                        <Text style={styles.timeButtonText}>
+                          {newReminderTime
+                            ? newReminderTime.toLocaleTimeString('en-US', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })
+                            : 'Set Time'}
+                        </Text>
+                      </TouchableOpacity>
+
+                      {showTimePicker && (
+                        <DateTimePicker
+                          value={newReminderTime || new Date()}
+                          mode="time"
+                          is24Hour={false}
+                          display="default"
+                          onChange={(event, selectedDate) => {
+                            setShowTimePicker(Platform.OS === 'web' ? true : false);
+                            if (selectedDate) {
+                              setNewReminderTime(selectedDate);
+                            }
+                          }}
+                        />
+                      )}
+
+                      <View style={styles.reminderActions}>
+                        {newReminderTime && (
+                          <TouchableOpacity
+                            style={styles.clearReminderButton}
+                            onPress={() => setNewReminderTime(null)}>
+                            <Text style={styles.clearReminderText}>Clear Reminder</Text>
+                          </TouchableOpacity>
+                        )}
+                        <TouchableOpacity
+                          style={styles.saveReminderButton}
+                          onPress={updateReminder}>
+                          <Text style={styles.saveReminderText}>Save</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.deleteSection}>
+                  <TouchableOpacity
+                    style={styles.deleteButton}
+                    onPress={() => selectedMedication && deleteMedication(selectedMedication.id)}>
+                    <Trash2 size={20} color={Colors.danger} />
+                    <Text style={styles.deleteButtonText}>Delete Medication</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </Modal>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  loading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: Colors.background,
+  },
+  header: {
+    paddingHorizontal: Spacing.xl,
+    paddingTop: 64,
+    paddingBottom: Spacing.xl,
+    backgroundColor: Colors.background,
+  },
+  greeting: {
+    fontSize: 28,
+    fontWeight: '400',
+    color: Colors.textSecondary,
+    marginBottom: Spacing.xs,
+    letterSpacing: -0.3,
+  },
+  title: {
+    fontSize: 40,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+    letterSpacing: -1,
+    lineHeight: 48,
+  },
+  scrollView: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: Platform.OS === 'ios' ? 120 : 100,
+    paddingTop: Spacing.sm,
+  },
+  sectionTitle: {
+    ...Typography.h3,
+    color: Colors.textPrimary,
+    paddingHorizontal: Spacing.xl,
+    marginBottom: Spacing.base,
+    marginTop: Spacing.sm,
+    fontWeight: '600',
+  },
+  gridContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    paddingHorizontal: Spacing.base,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  checkingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    backgroundColor: Colors.badgeBackground,
+    padding: Spacing.base,
+    marginHorizontal: Spacing.xl,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.base,
+    borderRadius: BorderRadius.lg,
+    ...Shadows.sm,
+  },
+  checkingText: {
+    ...Typography.labelMedium,
+    color: Colors.accent,
+  },
+  interactionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    padding: Spacing.base,
+    marginHorizontal: Spacing.xl,
+    marginTop: Spacing.sm,
+    marginBottom: Spacing.lg,
+    borderRadius: BorderRadius.lg,
+    ...Shadows.sm,
+  },
+  safeBanner: {
+    backgroundColor: `${Colors.success}15`,
+  },
+  warningBanner: {
+    backgroundColor: `${Colors.warning}15`,
+  },
+  interactionText: {
+    ...Typography.caption,
+    fontWeight: '600',
+    flex: 1,
+    color: Colors.text.primary,
+  },
+  empty: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xxl,
+  },
+  emptyText: {
+    ...Typography.subheading,
+    color: Colors.text.primary,
+    marginBottom: Spacing.sm,
+  },
+  emptySubtext: {
+    ...Typography.caption,
+    color: Colors.text.secondary,
+    textAlign: 'center',
+  },
+  list: {
+    paddingBottom: Spacing.lg,
+  },
+  modal: {
+    flex: 1,
+    backgroundColor: Colors.background,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: Spacing.lg,
+    paddingTop: 60,
+    backgroundColor: Colors.card,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+    ...Shadows.soft,
+  },
+  modalTitle: {
+    ...Typography.h3,
+    color: Colors.text.primary,
+  },
+  modalContent: {
+    flex: 1,
+    padding: Spacing.md,
+  },
+  safeContainer: {
+    alignItems: 'center',
+    padding: Spacing.xxl,
+  },
+  safeTitle: {
+    ...Typography.h2,
+    color: Colors.text.primary,
+    marginTop: Spacing.md,
+    marginBottom: Spacing.xs,
+  },
+  safeText: {
+    ...Typography.body,
+    color: Colors.text.secondary,
+    textAlign: 'center',
+  },
+  interactionCard: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    ...Shadows.soft,
+  },
+  severityBadge: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: Spacing.md,
+    paddingVertical: Spacing.xs,
+    borderRadius: BorderRadius.sm,
+    marginBottom: Spacing.md,
+  },
+  severity_low: {
+    backgroundColor: `${Colors.success}20`,
+  },
+  severity_moderate: {
+    backgroundColor: `${Colors.warning}20`,
+  },
+  severity_high: {
+    backgroundColor: `${Colors.danger}30`,
+  },
+  severity_critical: {
+    backgroundColor: `${Colors.danger}40`,
+  },
+  severityText: {
+    ...Typography.caption,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    textTransform: 'uppercase' as const,
+  },
+  interactionDrugs: {
+    ...Typography.body,
+    fontWeight: '600',
+    color: Colors.text.primary,
+    marginBottom: Spacing.sm,
+  },
+  interactionDesc: {
+    ...Typography.bodySmall,
+    color: Colors.text.secondary,
+    lineHeight: 20,
+  },
+  warningCard: {
+    flexDirection: 'row',
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    gap: Spacing.md,
+    ...Shadows.soft,
+  },
+  warningText: {
+    flex: 1,
+    ...Typography.bodySmall,
+    color: Colors.text.secondary,
+    lineHeight: 20,
+  },
+  detailName: {
+    fontSize: 28,
+    fontWeight: '700',
+    letterSpacing: -0.5,
+    color: Colors.text.primary,
+    marginBottom: Spacing.xs,
+  },
+  detailGeneric: {
+    ...Typography.bodyLarge,
+    color: Colors.text.secondary,
+    marginBottom: Spacing.lg,
+  },
+  detailSection: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    ...Shadows.soft,
+  },
+  detailLabel: {
+    ...Typography.bodySmall,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+    marginBottom: Spacing.xs,
+  },
+  detailValue: {
+    ...Typography.body,
+    color: Colors.text.primary,
+    lineHeight: 24,
+  },
+  reminderHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
+  editButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.xs,
+  },
+  editButtonText: {
+    color: Colors.primary,
+    ...Typography.bodySmall,
+    fontWeight: '600',
+  },
+  timeButton: {
+    backgroundColor: Colors.background,
+    borderRadius: BorderRadius.sm,
+    padding: Spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  timeButtonText: {
+    ...Typography.body,
+    color: Colors.text.primary,
+  },
+  reminderActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  clearReminderButton: {
+    padding: Spacing.md,
+  },
+  clearReminderText: {
+    color: Colors.danger,
+    ...Typography.bodySmall,
+    fontWeight: '600',
+  },
+  saveReminderButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: BorderRadius.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.md,
+    ...Shadows.soft,
+  },
+  saveReminderText: {
+    color: Colors.card,
+    ...Typography.button,
+  },
+  recommendedDosageSection: {
+    backgroundColor: `${Colors.primary}08`,
+    borderWidth: 1,
+    borderColor: `${Colors.primary}30`,
+  },
+  recommendedDosageTitle: {
+    ...Typography.bodyLarge,
+    fontWeight: '600',
+    color: Colors.primary,
+    marginBottom: Spacing.md,
+  },
+  recommendedDosageRow: {
+    flexDirection: 'row',
+    marginBottom: Spacing.xs,
+  },
+  recommendedDosageLabel: {
+    ...Typography.body,
+    fontWeight: '600',
+    color: Colors.text.secondary,
+    width: 100,
+  },
+  recommendedDosageValue: {
+    ...Typography.body,
+    color: Colors.text.primary,
+    flex: 1,
+  },
+  recommendedDosageNotes: {
+    marginTop: Spacing.md,
+    paddingTop: Spacing.md,
+    borderTopWidth: 1,
+    borderTopColor: `${Colors.primary}20`,
+  },
+  recommendedDosageNotesText: {
+    ...Typography.bodySmall,
+    color: Colors.text.secondary,
+    lineHeight: 20,
+  },
+  deleteSection: {
+    marginTop: Spacing.xl,
+    paddingTop: Spacing.lg,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  deleteButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.xs,
+    padding: Spacing.md,
+    borderRadius: BorderRadius.md,
+    borderWidth: 1,
+    borderColor: Colors.danger,
+    backgroundColor: `${Colors.danger}08`,
+  },
+  deleteButtonText: {
+    ...Typography.body,
+    fontWeight: '600',
+    color: Colors.danger,
+  },
+});
