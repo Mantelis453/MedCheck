@@ -720,29 +720,55 @@ export default function OnboardingScreen() {
         </View>
       </View>
 
+      {showDatePicker && Platform.OS === 'web' && (
+        <View style={styles.pickerContainer}>
+          <View style={styles.pickerHeader}>
+            <Text style={styles.pickerTitle}>Select Date of Birth</Text>
+          </View>
+          <TextInput
+            style={styles.webDateInput}
+            type="date"
+            value={formData.dateOfBirth || ''}
+            onChange={(e: any) => {
+              const value = e.target?.value || e.nativeEvent?.text;
+              if (value) {
+                updateFormData({ dateOfBirth: value });
+              }
+            }}
+            max={new Date().toISOString().split('T')[0]}
+          />
+          <View style={styles.pickerActions}>
+            <TouchableOpacity style={styles.cancelButton} onPress={() => setShowDatePicker(false)}>
+              <Text style={styles.cancelButtonText}>Cancel</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.confirmButton} onPress={() => setShowDatePicker(false)}>
+              <Text style={styles.confirmButtonText}>Done</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      )}
+
       {showDatePicker && Platform.OS === 'ios' && (
         <View style={styles.pickerContainer}>
           <View style={styles.pickerHeader}>
             <Text style={styles.pickerTitle}>Select Date of Birth</Text>
             <Text style={styles.pickerSubtitle}>
-              {tempDate.toLocaleDateString('en-US', { 
-                weekday: 'long', 
-                year: 'numeric', 
-                month: 'long', 
-                day: 'numeric' 
+              {tempDate.toLocaleDateString('en-US', {
+                weekday: 'long',
+                year: 'numeric',
+                month: 'long',
+                day: 'numeric'
               })}
             </Text>
           </View>
-          <View style={styles.datePickerWrapper}>
-            <DateTimePicker
-              value={tempDate}
-              mode="date"
-              display="spinner"
-              maximumDate={new Date()}
-              onChange={handleDateSelect}
-              style={styles.datePicker}
-            />
-          </View>
+          <DateTimePicker
+            value={tempDate}
+            mode="date"
+            display="spinner"
+            maximumDate={new Date()}
+            onChange={handleDateSelect}
+            style={styles.datePicker}
+          />
           <View style={styles.pickerActions}>
             <TouchableOpacity style={styles.cancelButton} onPress={cancelDateSelection}>
               <Text style={styles.cancelButtonText}>Cancel</Text>
@@ -1719,6 +1745,17 @@ const styles = StyleSheet.create({
   pickerSubtitle: {
     ...Typography.body,
     color: Colors.text.secondary,
+  },
+  webDateInput: {
+    backgroundColor: Colors.card,
+    borderRadius: BorderRadius.md,
+    padding: Spacing.md,
+    fontSize: 17,
+    color: Colors.text.primary,
+    borderWidth: 2,
+    borderColor: Colors.primary,
+    minHeight: 48,
+    marginVertical: Spacing.md,
   },
   datePickerWrapper: {
     backgroundColor: Colors.card,
